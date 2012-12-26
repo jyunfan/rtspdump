@@ -110,7 +110,9 @@ function ReceiveRTP()
     }
     $w=null;
     $e=null;
-    socket_select($read,$w,$e, null, null);
+    if (0 == socket_select($read,$w,$e, 0, 10000)) {
+      return false;
+    }
     foreach($read as $sock)
     {
       $n = socket_recvfrom($sock, $rtp, $maxps+64, 0, $host, $port);

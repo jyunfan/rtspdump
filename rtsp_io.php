@@ -117,12 +117,17 @@ class RTSP
     }
   }
 
-  function DoRequest($command, $request)
-  {
+  function DoRequest($command, $request) {
     global $verbose, $debug;
 
     $this->SendRequest($command, $request);
     $s = $this->ReadResponse();
+    return ParseResponse($command, $s);
+  }
+
+  function ParseResponse($command, $response) {
+    global $verbose, $debug;
+
     $c = func_num_args();
     foreach(explode("\r\n", $s) as $line)
     {
@@ -393,8 +398,7 @@ class RTSP
     );
   }
 
-  function EndStreaming()
-  {
+  function StopStreaming() {
     // Use SendRequest rather than DoRequest, because
     // we may be in TCP streaming mode and get RTP data
     // as response. And we don't care about the response, either.
@@ -408,6 +412,11 @@ class RTSP
       "User-Agent: ".USER_AGENT."\r\n".
       "Session: {$this->session}\r\n".
       "\r\n");
+  }
+
+  function EndStreaming()
+  {
+    $this->StopStreaming();
     socket_close($this->sock);
   }
 
@@ -419,6 +428,40 @@ class RTSP
       "\r\n"
      );
     // The response will be dealt by TCP_buffer_to_RTP().
+  }
+
+  function GetRequests()
+  {
+    global $debug;
+
+    $clients = array($this->sock);
+    $write   = NULL;
+    $except  = NULL;
+    $read    = $clients;
+    $reqs = array();
+    if (false === ($num_changed_sockets = socket_select($read, $write, $except, 0, 10000))) {
+      return false;
+    }
+    if ($num_changed_sockets == 0) {
+      return false;
+    }
+
+    // Actually this should be 'ReadRequest'.  Reuse this function
+    // because the format are the same.
+    for(;;) {
+      $buf = "my buffer";
+      $r = socket_recv($this->sock, $buf, 1, MSG_PEEK | MSG_DONTWAIT);
+      if ($r === false || $r == 0) {
+        break;
+        //break;
+      }
+      $s = $this->ReadResponse();
+      if($debug) {
+        print "Get Response from server:\n" . $s;
+      }
+      array_push($reqs, $s);
+    }
+    return $reqs;
   }
 };
 

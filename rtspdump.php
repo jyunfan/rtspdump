@@ -215,11 +215,6 @@ function CreateListeningSockets()
 $rtsp = new RTSP($stream);
 $rtsp->Connect();
 
-/////////////////
-$streams = $rtsp->FindStreams($stream);
-CreateListeningSockets();
-$rtsp->SubscribeToStreams($streams);
-
 declare(ticks=1);
 function SigTerminate($signal)
 {
@@ -231,6 +226,13 @@ function SigTerminate($signal)
 pcntl_signal(SIGINT,  'SigTerminate');
 pcntl_signal(SIGTERM, 'SigTerminate');
 pcntl_signal(SIGPIPE, 'SigTerminate');
+
+/////////////////
+CreateListeningSockets();
+
+start:
+$streams = $rtsp->FindStreams($stream);
+$rtsp->SubscribeToStreams($streams);
 
 $rtsp->PrepareStreaming();
 $rtsp->BeginStreaming();
@@ -297,12 +299,32 @@ for(;;)
     /* Sanctioned in the official specification. */
     if($debug & DEBUG_MISC)
       print
-        str_pad('',60)."\r".
+        #str_pad('',60)."\r".
         date('Y-m-d H:i:s ')."Sending keep-alive\n";
     $rtsp->SendKeepAlive();
   }
 
+  // Receive request from server
+  $reqs = $rtsp->GetRequests();
+  if ($reqs !== false) {
+    // quick but dirty
+    foreach ($reqs as $req) {
+      #print "REQ: $req\n";
+      if (preg_match("/End-of-Stream Reached/", $req)) {
+        if($debug) { print "End of stream reaches\n"; }
+        $rtsp->StopStreaming();
+      } else if (preg_match("/^ANNOUNCE/", $req)) {
+        if($debug) { print "ANNOUNCE\n"; }
+        goto start;
+      }
+    }
+  }
+
   $packet = ReceiveRTP();
+  if ($packet === false) {
+    //if ($debug) { print "ReceiveRTP does not get packets.\n"; }
+    continue;
+  }
   $payloadtype = $packet[0]['payloadtype'];
 
   if(!isset($readers[$payloadtype]))
@@ -331,6 +353,7 @@ for(;;)
   $saver  = &$outfiles[$payloadtype];
   $reader = &$readers[$payloadtype];
   $reader->HandleIncomingPacket($packet);
+  //if ($debug) { print "Start RetrieveNextPacket loop\n"; }
   while(($rtppacket = $reader->RetrieveNextPacket()) !== null)
   {
     /* We've now got a sequential RTP packet. */
@@ -342,7 +365,8 @@ for(;;)
 
     if($verbose)
     {
-      printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\r",
+      #printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\r",
+      printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\n",
         $rtppacket[0]['timestamp']/1000.0,
         $n_retransmit_requested,
         $n_retransmit_received,
@@ -355,6 +379,7 @@ for(;;)
       flush();
     }
   }
+  #if ($debug) { print "End RetrieveNextPacket loop\n"; }
   unset($saver);
   unset($reader);
 }
