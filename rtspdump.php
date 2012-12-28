@@ -219,8 +219,8 @@ declare(ticks=1);
 function SigTerminate($signal)
 {
   print "rtspdump: Got signal $signal\n";
-  global $rtsp;
-  $rtsp->EndStreaming();
+  global $rtsp, $streams;
+  $rtsp->EndStreaming($streams);
   exit;
 }
 pcntl_signal(SIGINT,  'SigTerminate');
