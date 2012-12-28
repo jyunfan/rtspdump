@@ -229,9 +229,9 @@ pcntl_signal(SIGPIPE, 'SigTerminate');
 
 /////////////////
 CreateListeningSockets();
-
+$request_from_server = '';
 start:
-$streams = $rtsp->FindStreams($stream);
+$streams = $rtsp->FindStreams($request_from_server);
 $rtsp->SubscribeToStreams($streams);
 
 $rtsp->PrepareStreaming();
@@ -312,9 +312,24 @@ for(;;)
       #print "REQ: $req\n";
       if (preg_match("/End-of-Stream Reached/", $req)) {
         if($debug) { print "End of stream reaches\n"; }
-        $rtsp->StopStreaming();
+        $rtsp->StopStreaming($streams);
       } else if (preg_match("/^ANNOUNCE/", $req)) {
-        if($debug) { print "ANNOUNCE\n"; }
+        if($debug) {
+          print "ANNOUNCE\n";
+        }
+        $request_from_server = $req;
+        $audio_seq = 1;
+        $video_seq = 1;
+        $first_seq = 1;
+        // Statistics:
+        $n_retransmit_requested = 0;
+        $n_retransmit_received  = 0;
+        $n_dropped       = 0;
+        $n_mm_packets    = 0;
+        $n_rtp_packets   = 0;
+        $n_mm_keyframes  = 0;
+        $n_mm_bytes      = 0;
+        $n_net_bytes     = 0;
         goto start;
       }
     }
@@ -353,6 +368,9 @@ for(;;)
   $saver  = &$outfiles[$payloadtype];
   $reader = &$readers[$payloadtype];
   $reader->HandleIncomingPacket($packet);
+  if ($debug) {
+    #printf("PREV_RETURNED: #%X \n", $reader->prev_returned);
+  }
   //if ($debug) { print "Start RetrieveNextPacket loop\n"; }
   while(($rtppacket = $reader->RetrieveNextPacket()) !== null)
   {
@@ -365,8 +383,8 @@ for(;;)
 
     if($verbose)
     {
-      #printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\r",
-      printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\n",
+      printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\r",
+      #printf("%13.3f RTX:%d->%d Drop:%d RTP:%-5d MM:%-5d K:%d | %.1f MB -> %.1f MB\n",
         $rtppacket[0]['timestamp']/1000.0,
         $n_retransmit_requested,
         $n_retransmit_received,
@@ -387,4 +405,4 @@ unset($readers);
 unset($outfiles);
 
 if($verbose) print "Ending streaming\n";
-$rtsp->EndStreaming();
+$rtsp->EndStreaming($streams);

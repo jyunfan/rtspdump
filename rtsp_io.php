@@ -117,24 +117,17 @@ class RTSP
     }
   }
 
-  function DoRequest($command, $request) {
-    global $verbose, $debug;
+  // Put result in global variables
+  function ParseArgs($s, $args) {
+    global $debug;
 
-    $this->SendRequest($command, $request);
-    $s = $this->ReadResponse();
-    return ParseResponse($command, $s);
-  }
-
-  function ParseResponse($command, $response) {
-    global $verbose, $debug;
-
-    $c = func_num_args();
+    $c = count($args);
     foreach(explode("\r\n", $s) as $line)
     {
       $captures = Array();
-      for($a=2; $a<$c; ++$a)
+      for($a=0; $a<$c; ++$a)
       {
-        $arg = func_get_arg($a);
+        $arg = $args[$a];
         if(is_array($arg[0])) $captures = $arg; else $captures[] = $arg;
       }
       foreach($captures as $arg)
@@ -156,6 +149,18 @@ class RTSP
         }
       }
     }
+  }
+
+  function DoRequest($command, $request) {
+    global $verbose, $debug;
+
+    $this->SendRequest($command, $request);
+    $s = $this->ReadResponse();
+
+    $args = func_get_args();
+    array_shift($args);
+    array_shift($args);
+    $this->ParseArgs($s, $args);
 
     if($debug & DEBUG_RTSP)
       print "[$command]\n$s\n\n";
@@ -210,24 +215,32 @@ class RTSP
     return $s;
   }
 
-  function FindStreams()
+  function FindStreams($response)
   {
     global $debug;
 
-    /* A DESCRIBE request is not required to get streaming
-     * started, if you already know all the required information.
-     * But for ASF, we really need the asfv1 and maxps fields.
-     * Otherwise we cannot produce working ASF files. In general,
-     * it is a good idea to get the stream names from the server.
-     */
-    $s = $this->DoRequest('Describe',
-      "DESCRIBE {$this->stream} RTSP/1.0\r\n".
-      "User-Agent: ".USER_AGENT."\r\n".
-       "\r\n",
-      Array('asf_header',  '/.*asfv1;base64,(.*)/', 'base64_decode($1)'), // ASF file header
-      Array('maxps',       '/.*maxps:(.*)/',        '(int)$1'),           // Maximum packet size
-      Array('playlist_id', '/X-Playlist-Gen-Id: *(.*)/', '$1')            // Playlist ID
-    );
+    $arg[0] = Array('asf_header',  '/.*asfv1;base64,(.*)/', 'base64_decode($1)'); // ASF file header
+    $arg[1] = Array('maxps',       '/.*maxps:(.*)/',        '(int)$1');           // Maximum packet size
+    $arg[2] = Array('playlist_id', '/X-Playlist-Gen-Id: *(.*)/', '$1');           // Playlist ID
+
+    if ($response != '') {
+      // Skip DESCRIBE if we have server's ANNOUNCE request
+      $s = $response;
+      $this->ParseArgs($s, Array($arg[0], $arg[1], $arg[2]));
+    } else {
+      /* A DESCRIBE request is not required to get streaming
+       * started, if you already know all the required information.
+       * But for ASF, we really need the asfv1 and maxps fields.
+       * Otherwise we cannot produce working ASF files. In general,
+       * it is a good idea to get the stream names from the server.
+       */
+      $s = $this->DoRequest('Describe',
+        "DESCRIBE {$this->stream} RTSP/1.0\r\n".
+        "User-Agent: ".USER_AGENT."\r\n".
+        "\r\n",
+        $arg[0], $arg[1], $arg[2]
+      );
+    }
     $streamno = -1;
     $streams = Array();
     foreach(explode("\r\n", $s) as $line)
@@ -290,8 +303,8 @@ class RTSP
       // Suggest a ssrc to the server. WMS ignores this value.
       // DSS echoes it back. So far, there does not seem to be
       // purpose in specifying a value.
-      #$ssrc = sprintf(';ssrc=%08x', rand(0,0x7FFFFFFF);
-      $ssrc = '';
+      $ssrc = sprintf(';ssrc=%08x', rand(0,0x7FFFFFFF));
+      #$ssrc = '';
       $transport_hdr = ($av_port === 'tcp'
           ? "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
           : "Transport: RTP/AVP/UDP;unicast;client_port=$av_port{$ssrc};mode=PLAY\r\n");
@@ -398,6 +411,23 @@ class RTSP
     );
   }
 
+  function StopStreaming(&$streams)
+  {
+    foreach($streams as $control => &$streamcfg)
+    {
+      $slash = '/';
+      if(preg_match('@/$@', $this->stream)) $slash = '';
+      $this->DoRequest("Teardown {$control}",
+        "TEARDOWN {$this->stream}$slash{$control} RTSP/1.0\r\n".
+        "User-Agent: ".USER_AGENT."\r\n".
+        "Session: {$this->session}\r\n".
+        //"x-Retransmit: our-retransmit\r\n". // this is for DSS
+        "X-Playlist-Gen-Id: {$this->playlist_id}\r\n".
+        "\r\n"
+      );
+    }
+  }
+  /*
   function StopStreaming() {
     // Use SendRequest rather than DoRequest, because
     // we may be in TCP streaming mode and get RTP data
@@ -413,10 +443,11 @@ class RTSP
       "Session: {$this->session}\r\n".
       "\r\n");
   }
+  */
 
-  function EndStreaming()
+  function EndStreaming($streams)
   {
-    $this->StopStreaming();
+    $this->StopStreaming($streams);
     socket_close($this->sock);
   }
 
